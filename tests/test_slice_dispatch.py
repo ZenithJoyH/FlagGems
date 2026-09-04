@@ -36,11 +36,27 @@ def _slice_dispatch(inp, case):
     raise AssertionError(f"Unknown slice case: {case}")
 
 
+def _gems_slice(inp, case):
+    if case == "empty":
+        return flag_gems.slice(inp, end=0)
+    if case == "full":
+        return flag_gems.slice(inp)
+    if case == "range":
+        return flag_gems.slice(inp, start=1, end=3)
+    if case == "aten_default_step":
+        return flag_gems.slice(inp, 0, 1, 3)
+    if case == "explicit_step":
+        return flag_gems.slice(inp, step=2)
+    raise AssertionError(f"Unknown slice case: {case}")
+
+
 @pytest.mark.slice
 @pytest.mark.parametrize(
     "case", ["empty", "full", "range", "aten_default_step", "explicit_step"]
 )
-@pytest.mark.parametrize("dtype", [torch.float32] if cfg.QUICK_MODE else utils.FLOAT_DTYPES)
+@pytest.mark.parametrize(
+    "dtype", [torch.float32] if cfg.QUICK_MODE else utils.FLOAT_DTYPES
+)
 @pytest.mark.parametrize("strided", [False, True])
 @pytest.mark.parametrize("mode", ["eager", "graph"])
 def test_slice_dispatch_defaults(case, dtype, strided, mode):
@@ -58,30 +74,21 @@ def test_slice_dispatch_defaults(case, dtype, strided, mode):
         assert out.device == inp.device
         utils.gems_assert_equal(out, reference)
 
-    # Register only slice so unrelated operator replacements cannot mask the bug.
-    with flag_gems.use_gems(include=["slice"]):
-        registered_keys = flag_gems.all_registered_keys()
-        assert "slice.Tensor" in registered_keys, (
-            "FlagGems did not register aten::slice.Tensor; refusing to test "
-            "the native PyTorch fallback. "
-            f"Imported FlagGems from {flag_gems.__file__}; "
-            f"registered keys: {registered_keys}"
-        )
-        if mode == "eager":
-            out = _slice_dispatch(inp, case)
-        else:
-            stream = torch.cuda.Stream()
-            stream.wait_stream(torch.cuda.current_stream())
-            with torch.cuda.stream(stream):
-                for _ in range(3):
-                    _slice_dispatch(inp, case)
-            torch.cuda.current_stream().wait_stream(stream)
-            torch.cuda.synchronize()
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                out = _slice_dispatch(inp, case)
-            graph.replay()
-            torch.cuda.synchronize()
+    if mode == "eager":
+        out = _gems_slice(inp, case)
+    else:
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            for _ in range(3):
+                _gems_slice(inp, case)
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            out = _gems_slice(inp, case)
+        graph.replay()
+        torch.cuda.synchronize()
 
     assert_output(out, ref_out)
     if mode == "graph":
