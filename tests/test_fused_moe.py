@@ -156,14 +156,25 @@ def test_w8a8_large_m_accuracy(monkeypatch, num_tokens, dtype, execution_mode):
     monkeypatch.setattr(moe, "get_moe_configs", lambda *args, **kwargs: None)
     generator = torch.Generator(device="cpu").manual_seed(20260904)
     e, k, i, topk = 8, 128, 128, 2
-    x = torch.randn(num_tokens, k, generator=generator).to(dtype)
-    w1 = torch.randint(-8, 9, (e, 2 * i, k), generator=generator, dtype=torch.int8)
+    # Isolate scale propagation from CPU/device INT8 rounding ties. Each
+    # projection selects one feature: gate=32, up=code/4, hence SiLU(gate)*up
+    # rounds to 8*code. With max code=127, the second scale is exactly 8.
+    # Non-unit per-channel weight scales are essential to expose the old path.
+    x = torch.full((num_tokens, k), 32, dtype=dtype)
+    x[:, 1:] *= torch.randint(0, 2, (num_tokens, k - 1), generator=generator) * 2 - 1
+    w1 = torch.zeros(e, 2 * i, k, dtype=torch.int8)
+    w1[:, :i, 0] = 1
+    channels = torch.arange(i)
+    codes = (channels % 127 + 1).to(torch.int8)
+    codes[0] = 127
+    w1[:, i + channels, channels % k] = codes
     w2 = torch.randint(-8, 9, (e, k, i), generator=generator, dtype=torch.int8)
-    s1 = torch.rand(e, 2 * i, 1, generator=generator) * 0.02 + 0.02
-    s2 = torch.rand(e, k, 1, generator=generator) * 0.02 + 0.02
+    s1 = torch.ones(e, 2 * i, 1)
+    s1[:, i:] = 1 / 128
+    s2 = ((torch.arange(e * k).reshape(e, k, 1) % 4 + 1).float() / 1024).contiguous()
     logits = torch.randn(num_tokens, e, generator=generator)
-    values, ids = logits.topk(topk, dim=-1)
-    weights = values.softmax(dim=-1)
+    _, ids = logits.topk(topk, dim=-1)
+    weights = torch.tensor([0.25, 0.75]).expand(num_tokens, -1).contiguous()
     ids = ids.to(torch.int32)
     ref = _w8a8_reference(x, w1, w2, weights, ids, s1, s2)
     x, w1, w2, weights, ids, s1, s2 = [
