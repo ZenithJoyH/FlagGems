@@ -691,15 +691,8 @@ def _sparse_decode_model1_kernel(
 # ============================================================================
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({"BLOCK_H": 64, "BLOCK_N": 64}, num_warps=8, num_stages=2),
-        triton.Config({"BLOCK_H": 64, "BLOCK_N": 64}, num_warps=8, num_stages=3),
-    ],
-    key=["HQ", "DQK", "HAVE_CAUSAL"],
-)
 @triton.jit
-def _dense_decode_kernel(
+def _dense_decode_kernel_impl(
     Q_ptr,
     stride_q_b,
     stride_q_sq,
@@ -748,14 +741,15 @@ def _dense_decode_kernel(
     )
     q_nope = tl.load(Q_ptr + offs_q_nope, mask=mask_head[:, None], other=0.0)
 
-    offs_d_pe = tl.arange(HEAD_DIM_V, DQK)
-    offs_q_pe = (
-        i_b * stride_q_b
-        + i_sq * stride_q_sq
-        + cur_head[:, None] * stride_q_h
-        + offs_d_pe[None, :]
-    )
-    q_pe = tl.load(Q_ptr + offs_q_pe, mask=mask_head[:, None], other=0.0)
+    if DQK > HEAD_DIM_V:
+        offs_d_pe = tl.arange(HEAD_DIM_V, DQK)
+        offs_q_pe = (
+            i_b * stride_q_b
+            + i_sq * stride_q_sq
+            + cur_head[:, None] * stride_q_h
+            + offs_d_pe[None, :]
+        )
+        q_pe = tl.load(Q_ptr + offs_q_pe, mask=mask_head[:, None], other=0.0)
 
     # Online softmax accumulators
     e_max = tl.full([BLOCK_H], value=float("-inf"), dtype=tl.float32)
@@ -782,9 +776,10 @@ def _dense_decode_kernel(
         qk = tl.dot(q_nope, k_c)
 
         # Add RoPE contribution
-        offs_k_pe = kv_loc[None, :] * stride_kv_bs + offs_d_pe[:, None]
-        k_pe = tl.load(KV_cache + offs_k_pe)
-        qk = tl.dot(q_pe, k_pe, acc=qk)
+        if DQK > HEAD_DIM_V:
+            offs_k_pe = kv_loc[None, :] * stride_kv_bs + offs_d_pe[:, None]
+            k_pe = tl.load(KV_cache + offs_k_pe)
+            qk = tl.dot(q_pe, k_pe, acc=qk)
         qk *= sm_scale
 
         # Online softmax update
@@ -810,9 +805,12 @@ def _dense_decode_kernel(
 
         qk = tl.dot(q_nope, k_c)
 
-        offs_k_pe = kv_loc[None, :] * stride_kv_bs + offs_d_pe[:, None]
-        k_pe = tl.load(KV_cache + offs_k_pe, mask=mask_kvsplit[None, :], other=0.0)
-        qk = tl.dot(q_pe, k_pe, acc=qk)
+        if DQK > HEAD_DIM_V:
+            offs_k_pe = kv_loc[None, :] * stride_kv_bs + offs_d_pe[:, None]
+            k_pe = tl.load(
+                KV_cache + offs_k_pe, mask=mask_kvsplit[None, :], other=0.0
+            )
+            qk = tl.dot(q_pe, k_pe, acc=qk)
         qk *= sm_scale
 
         qk = tl.where(mask_kvsplit[None, :], qk, float("-inf"))
@@ -842,6 +840,25 @@ def _dense_decode_kernel(
     lse_val = e_max + tl.math.log(e_sum)
     lse_offset = i_b * stride_lse_b + cur_head * stride_lse_h + i_sq
     tl.store(LSE + lse_offset, lse_val, mask=mask_head)
+
+
+_dense_decode_kernel = triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_H": 64, "BLOCK_N": 64}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_H": 64, "BLOCK_N": 64}, num_warps=8, num_stages=3),
+    ],
+    key=["HQ", "DQK", "HAVE_CAUSAL"],
+)(_dense_decode_kernel_impl)
+
+_dense_decode_small_head_kernel = triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 64}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 64}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 64}, num_warps=8, num_stages=3),
+    ],
+    key=["HQ", "DQK", "PAGE_SIZE", "HAVE_CAUSAL"],
+)(_dense_decode_kernel_impl)
 
 
 # ============================================================================
@@ -1305,6 +1322,28 @@ def _sparse_decode_dispatch(
     )
 
 
+def _can_use_dense_decode_small_head_kernel(
+    q,
+    kv_cache,
+    seq_q,
+    num_heads_q,
+    head_dim_k,
+    head_dim_v,
+    page_block_size,
+):
+    """Return whether the validated small-head dense decode path applies."""
+    return (
+        seq_q == 1
+        and 0 < num_heads_q <= 16
+        and head_dim_k in (512, 576)
+        and head_dim_v == 512
+        and page_block_size in (16, 64)
+        and q.dtype == torch.bfloat16
+        and kv_cache.dtype == torch.bfloat16
+        and q.stride(-1) == 1
+    )
+
+
 def _dense_decode_dispatch(
     q,
     kv_cache,
@@ -1322,9 +1361,6 @@ def _dense_decode_dispatch(
     causal,
 ):
     """Launch dense decode kernel."""
-    BLOCK_H = 64
-    num_head_blocks = (num_heads_q + BLOCK_H - 1) // BLOCK_H
-
     # KV cache: [num_blocks, page_block_size, num_heads_k, head_dim_k]
     # Flatten to [num_tokens_total, head_dim_k] for paged access
     kv_flat = kv_cache.view(-1, head_dim_k).contiguous()
@@ -1350,9 +1386,25 @@ def _dense_decode_dispatch(
         )
         return
 
+    use_small_head_kernel = _can_use_dense_decode_small_head_kernel(
+        q,
+        kv_cache,
+        seq_q,
+        num_heads_q,
+        head_dim_k,
+        head_dim_v,
+        page_block_size,
+    )
+    block_h = 16 if use_small_head_kernel else 64
+    num_head_blocks = (num_heads_q + block_h - 1) // block_h
     grid = (num_head_blocks, batch_size * seq_q)
 
-    _dense_decode_kernel[grid](
+    kernel = (
+        _dense_decode_small_head_kernel
+        if use_small_head_kernel
+        else _dense_decode_kernel
+    )
+    kernel[grid](
         q,
         q.stride(0),
         q.stride(1),

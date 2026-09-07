@@ -38,6 +38,9 @@ except ImportError:
 # Triton implementation under test
 from flag_gems.fused.flash_mla_with_kvcache import FlashMLASchedMeta
 from flag_gems.fused.flash_mla_with_kvcache import (
+    _can_use_dense_decode_small_head_kernel,
+)
+from flag_gems.fused.flash_mla_with_kvcache import (
     flash_mla_with_kvcache as triton_flash_mla,
 )
 from flag_gems.fused.flash_mla_with_kvcache import (
@@ -395,6 +398,96 @@ def test_dense_decode_seq_q1():
 
     check_close(triton_out, cuda_out, "out")
     check_close(triton_lse, cuda_lse, "lse")
+
+
+@pytest.mark.parametrize(
+    "h_q,d_qk,page_block_size,expected",
+    [
+        (1, 512, 16, True),
+        (4, 576, 64, True),
+        (16, 512, 64, True),
+        (0, 576, 16, False),
+        (17, 576, 16, False),
+        (8, 640, 16, False),
+        (8, 576, 32, False),
+    ],
+)
+def test_dense_decode_small_head_kernel_selection(
+    h_q, d_qk, page_block_size, expected
+):
+    q = torch.empty(2, 1, h_q, d_qk, dtype=torch.bfloat16, device=DEVICE)
+    kv_cache = torch.empty(
+        4, page_block_size, 1, d_qk, dtype=torch.bfloat16, device=DEVICE
+    )
+
+    actual = _can_use_dense_decode_small_head_kernel(
+        q,
+        kv_cache,
+        seq_q=1,
+        num_heads_q=h_q,
+        head_dim_k=d_qk,
+        head_dim_v=512,
+        page_block_size=page_block_size,
+    )
+
+    assert actual is expected
+
+
+@pytest.mark.parametrize(
+    "h_q,d_qk,page_block_size,causal",
+    [
+        (1, 512, 16, False),
+        (4, 576, 64, False),
+        (8, 512, 64, True),
+        (16, 576, 16, True),
+    ],
+)
+def test_dense_decode_small_heads_matches_torch(
+    h_q, d_qk, page_block_size, causal
+):
+    batch, seq_q = 2, 1
+    head_dim_v = 512
+    cache_seqlens = torch.tensor(
+        [page_block_size - 1, 128], dtype=torch.int32, device=DEVICE
+    )
+    max_pages_per_seq = math.ceil(128 / page_block_size)
+    total_pages = batch * max_pages_per_seq
+
+    torch.manual_seed(46 + h_q)
+    q = torch.randn(
+        batch, seq_q, h_q, d_qk, dtype=torch.bfloat16, device=DEVICE
+    )
+    kv_cache = torch.randn(
+        total_pages,
+        page_block_size,
+        1,
+        d_qk,
+        dtype=torch.bfloat16,
+        device=DEVICE,
+    )
+    block_table = torch.arange(
+        total_pages, dtype=torch.int32, device=DEVICE
+    ).view(batch, max_pages_per_seq)
+
+    actual_out, actual_lse = _run_triton(
+        q, kv_cache, block_table, cache_seqlens, head_dim_v, causal=causal
+    )
+
+    expected_out = []
+    expected_lse = []
+    scale = d_qk**-0.5
+    for batch_idx in range(batch):
+        seq_len = int(cache_seqlens[batch_idx].item())
+        history = kv_cache[block_table[batch_idx].long()].reshape(-1, d_qk)
+        history = history[:seq_len].float()
+        scores = q[batch_idx, 0].float() @ history.T * scale
+        expected_out.append(torch.softmax(scores, dim=-1) @ history[:, :head_dim_v])
+        expected_lse.append(torch.logsumexp(scores, dim=-1))
+
+    expected_out = torch.stack(expected_out)[:, None]
+    expected_lse = torch.stack(expected_lse)[:, :, None]
+    torch.testing.assert_close(actual_out.float(), expected_out, atol=0.02, rtol=0.02)
+    torch.testing.assert_close(actual_lse, expected_lse, atol=0.03, rtol=0.01)
 
 
 def test_error_v32_rejects_topk_length():
