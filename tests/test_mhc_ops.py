@@ -224,6 +224,72 @@ def test_mhc_pre_vs_ref(n, hidden_size, hc_mult):
     torch.testing.assert_close(li_triton.cpu(), li_ref, rtol=1e-2, atol=1e-2)
 
 
+@pytest.mark.mhc_pre
+def test_mhc_pre_checkpoint_contract():
+    """The optional clamp path matches pre-GEMM BF16 checkpoint semantics."""
+    n, hidden_size, hc_mult = 265, 3584, 4
+    torch.manual_seed(20260907)
+    residual = torch.randn(
+        n, hc_mult, hidden_size, dtype=torch.bfloat16, device=flag_gems.device
+    )
+    fn = torch.randn(
+        hc_mult * hc_mult + 2 * hc_mult,
+        hc_mult * hidden_size,
+        dtype=torch.float32,
+        device=flag_gems.device,
+    ) * 0.2
+    hc_scale = torch.tensor(
+        [0.4, 0.2, 8.0], dtype=torch.float32, device=flag_gems.device
+    )
+    hc_base = torch.linspace(
+        -4, 4, hc_mult * hc_mult + 2 * hc_mult,
+        dtype=torch.float32,
+        device=flag_gems.device,
+    )
+    actual = mhc_pre(
+        residual,
+        fn,
+        hc_scale,
+        hc_base,
+        1e-6,
+        0.0,
+        1e-6,
+        2.0,
+        20,
+        clamp_min=-30.0,
+        clamp_max=30.0,
+    )
+
+    flat = residual.float().flatten(start_dim=-2)
+    normalized = flat * torch.rsqrt(
+        flat.square().mean(dim=-1, keepdim=True) + 1e-6
+    )
+    mixes = torch.nn.functional.linear(
+        normalized.to(torch.bfloat16), fn.to(torch.bfloat16)
+    ).float()
+    pre = torch.sigmoid(mixes[..., :hc_mult] * hc_scale[0] + hc_base[:hc_mult])
+    post = torch.sigmoid(
+        mixes[..., hc_mult : 2 * hc_mult] * hc_scale[1]
+        + hc_base[hc_mult : 2 * hc_mult]
+    ) * 2.0
+    comb = (
+        mixes[..., 2 * hc_mult :] * hc_scale[2] + hc_base[2 * hc_mult :]
+    ).unflatten(-1, (hc_mult, hc_mult))
+    comb = comb.clamp(-30.0, 30.0)
+    comb = torch.exp(comb - comb.amax(-1, keepdim=True))
+    for _ in range(20):
+        comb = comb / (comb.sum(-1, keepdim=True) + 1e-6)
+        comb = comb / (comb.sum(-2, keepdim=True) + 1e-6)
+    layer_input = (pre.unsqueeze(-1).to(torch.bfloat16) * residual).sum(-2)
+    expected = (
+        post.unsqueeze(-1).to(torch.bfloat16),
+        comb.to(torch.bfloat16),
+        layer_input.to(torch.bfloat16),
+    )
+    for got, want in zip(actual, expected):
+        torch.testing.assert_close(got, want, rtol=0, atol=0)
+
+
 if cfg.QUICK_MODE:
     MHC_BWD_CONFIGS = list(
         product(

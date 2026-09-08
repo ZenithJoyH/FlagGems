@@ -50,6 +50,61 @@ def _get_fn_bf16_cached(fn: torch.Tensor) -> torch.Tensor:
     return fn_bf16
 
 
+def _mhc_pre_checkpoint(
+    residual: torch.Tensor,
+    fn: torch.Tensor,
+    hc_scale: torch.Tensor,
+    hc_base: torch.Tensor,
+    rms_eps: float,
+    clamp_min: float,
+    clamp_max: float,
+    hc_post_mult_value: float,
+    sinkhorn_repeat: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Checkpoint-exact mHC path with pre-GEMM BF16 rounding and clamp."""
+    if not clamp_min < clamp_max:
+        raise ValueError("mHC clamp_min must be smaller than clamp_max")
+    if sinkhorn_repeat < 1:
+        raise ValueError("mHC requires at least one Sinkhorn iteration")
+
+    hc_mult = residual.shape[-2]
+    hidden_size = residual.shape[-1]
+    outer_shape = residual.shape[:-2]
+    residual_flat = residual.reshape(-1, hc_mult, hidden_size).contiguous()
+    flat = residual_flat.float().flatten(start_dim=-2)
+    normalized = flat * torch.rsqrt(
+        flat.square().mean(dim=-1, keepdim=True) + rms_eps
+    )
+    mixes = torch.mm(
+        normalized.to(torch.bfloat16), _get_fn_bf16_cached(fn).t()
+    ).float()
+
+    pre = torch.sigmoid(
+        mixes[..., :hc_mult] * hc_scale[0] + hc_base[:hc_mult]
+    )
+    post = torch.sigmoid(
+        mixes[..., hc_mult : 2 * hc_mult] * hc_scale[1]
+        + hc_base[hc_mult : 2 * hc_mult]
+    )
+    post = post * hc_post_mult_value
+    comb = (
+        mixes[..., 2 * hc_mult :] * hc_scale[2] + hc_base[2 * hc_mult :]
+    ).unflatten(-1, (hc_mult, hc_mult))
+    comb = comb.clamp(min=clamp_min, max=clamp_max)
+    comb = torch.exp(comb - comb.amax(dim=-1, keepdim=True))
+    for _ in range(sinkhorn_repeat):
+        comb = comb / (comb.sum(dim=-1, keepdim=True) + rms_eps)
+        comb = comb / (comb.sum(dim=-2, keepdim=True) + rms_eps)
+    layer_input = (
+        pre.unsqueeze(-1).to(torch.bfloat16) * residual_flat
+    ).sum(dim=-2)
+    return (
+        post.view(*outer_shape, hc_mult, 1).to(torch.bfloat16),
+        comb.view(*outer_shape, hc_mult, hc_mult).to(torch.bfloat16),
+        layer_input.view(*outer_shape, hidden_size).to(torch.bfloat16),
+    )
+
+
 @triton.jit
 def _mhc_pre_fused_kernel_hc_mult_4_impl(
     gemm_out_ptr,  # (num_tokens, hc_mult3), float32
@@ -632,6 +687,9 @@ def mhc_pre(
     hc_post_mult_value: float,
     sinkhorn_repeat: int,
     n_splits: int = 1,
+    *,
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Optimized mHC pre block.
@@ -641,6 +699,25 @@ def mhc_pre(
     """
     assert residual.dtype == torch.bfloat16
     assert fn.dtype == torch.float32
+
+    if (clamp_min is None) != (clamp_max is None):
+        raise ValueError("mHC clamp_min and clamp_max must be provided together")
+    if clamp_min is not None:
+        if hc_pre_eps != 0.0 or hc_sinkhorn_eps != rms_eps:
+            raise ValueError(
+                "Checkpoint mHC requires hc_pre_eps=0 and hc_sinkhorn_eps=rms_eps"
+            )
+        return _mhc_pre_checkpoint(
+            residual,
+            fn,
+            hc_scale,
+            hc_base,
+            rms_eps,
+            clamp_min,
+            clamp_max,
+            hc_post_mult_value,
+            sinkhorn_repeat,
+        )
 
     hc_mult = residual.shape[-2]
     hidden_size = residual.shape[-1]
