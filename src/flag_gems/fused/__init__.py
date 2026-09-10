@@ -17,9 +17,16 @@ from flag_gems.fused.add_rms_norm import add_rms_norm
 from flag_gems.fused.apply_repetition_penalties import apply_repetition_penalties
 from flag_gems.fused.beam_search_score import beam_search_score, beam_search_score_
 from flag_gems.fused.bf16_paged_mqa_logits import bf16_paged_mqa_logits
+from flag_gems.fused.bf16_paged_mqa_logits_graph_safe import (
+    bf16_paged_mqa_logits_graph_safe,
+)
 from flag_gems.fused.bincount import bincount
+from flag_gems.fused.causal_conv1d_update import causal_conv1d_update
 from flag_gems.fused.chunk_gated_delta_rule import chunk_gated_delta_rule
 from flag_gems.fused.concat_and_cache_mla import concat_and_cache_mla
+from flag_gems.fused.cp_gather_indexer_k_bf16_cache import (
+    cp_gather_indexer_k_bf16_cache,
+)
 from flag_gems.fused.cp_gather_indexer_k_quant_cache import (
     cp_gather_indexer_k_quant_cache,
 )
@@ -66,11 +73,17 @@ from flag_gems.fused.fused_moe import (
     invoke_fused_moe_triton_kernel,
     outplace_fused_experts,
 )
+from flag_gems.fused.fused_recurrent_kda import fused_recurrent_kda
+from flag_gems.fused.fused_safe_kda_gate import fused_safe_kda_gate
 from flag_gems.fused.geglu import dgeglu, geglu
 from flag_gems.fused.gelu_and_mul import gelu_and_mul
 from flag_gems.fused.grouped_topk import grouped_topk
 from flag_gems.fused.indexer_k_quant_and_cache import indexer_k_quant_and_cache
 from flag_gems.fused.instance_norm import instance_norm
+from flag_gems.fused.kpool_compress import (
+    kpool_compress_and_write_cache,
+    kpool_decode_update_and_maybe_write_cache_batched,
+)
 from flag_gems.fused.matmul_bias_activation import matmul_bias_activation
 from flag_gems.fused.matmuladd import matmuladd
 from flag_gems.fused.mhc import (
@@ -90,6 +103,7 @@ from flag_gems.fused.moe_sum import moe_sum
 from flag_gems.fused.mrope import mrope
 from flag_gems.fused.outer import outer
 from flag_gems.fused.pack_seq import pack_seq_triton
+from flag_gems.fused.prefill_tail import persist_prefill_tail
 from flag_gems.fused.post_layer_norm_residual import post_layer_norm_residual
 from flag_gems.fused.reglu import dreglu, reglu
 from flag_gems.fused.reshape_and_cache import reshape_and_cache
@@ -123,13 +137,16 @@ __all__ = [
     "beam_search_score",
     "beam_search_score_",
     "bf16_paged_mqa_logits",
+    "bf16_paged_mqa_logits_graph_safe",
     "bincount",
     "bucket_sort_topk",
+    "causal_conv1d_update",
     "chunk_gated_delta_rule",
     "chunk_gated_delta_rule_fwd",
     "combine_topk_swa_indices",
     "compute_global_topk_indices_and_lens",
     "concat_and_cache_mla",
+    "cp_gather_indexer_k_bf16_cache",
     "cp_gather_indexer_k_quant_cache",
     "cross_entropy_loss",
     "cutlass_scaled_mm",
@@ -153,6 +170,8 @@ __all__ = [
     "fused_inv_rope_fp8_quant",
     "fused_q_kv_rmsnorm",
     "fused_recurrent_gated_delta_rule_fwd",
+    "fused_recurrent_kda",
+    "fused_safe_kda_gate",
     "geglu",
     "gelu_and_mul",
     "grouped_topk",
@@ -162,6 +181,8 @@ __all__ = [
     "inplace_fused_experts",
     "instance_norm",
     "invoke_fused_moe_triton_kernel",
+    "kpool_compress_and_write_cache",
+    "kpool_decode_update_and_maybe_write_cache_batched",
     "matmul_bias_activation",
     "matmuladd",
     "mhc_bwd",
@@ -175,6 +196,7 @@ __all__ = [
     "outer",
     "outplace_fused_experts",
     "pack_seq_triton",
+    "persist_prefill_tail",
     "post_layer_norm_residual",
     "reglu",
     "reshape_and_cache",
