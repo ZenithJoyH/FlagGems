@@ -91,6 +91,17 @@ from flag_gems.fused.mrope import mrope
 from flag_gems.fused.outer import outer
 from flag_gems.fused.pack_seq import pack_seq_triton
 from flag_gems.fused.post_layer_norm_residual import post_layer_norm_residual
+from flag_gems.fused.common_slot_mapping import compute_common_slot_mapping
+from flag_gems.fused.gdn_packed_decode import gdn_packed_decode
+from flag_gems.fused.ple_state import ple_state_gather, ple_state_scatter_
+from flag_gems.fused.qsa import (
+    expand_qsa_block_indices,
+    qsa_compress_groups_with_ratio,
+    qsa_mqa_paged,
+    qsa_select_paged_tokens,
+    qsa_sparse_paged_attention,
+    qsa_store_cache_rows,
+)
 from flag_gems.fused.reglu import dreglu, reglu
 from flag_gems.fused.reshape_and_cache import reshape_and_cache
 from flag_gems.fused.reshape_and_cache_flash import reshape_and_cache_flash
@@ -176,6 +187,16 @@ __all__ = [
     "outplace_fused_experts",
     "pack_seq_triton",
     "post_layer_norm_residual",
+    "compute_common_slot_mapping",
+    "expand_qsa_block_indices",
+    "gdn_packed_decode",
+    "ple_state_gather",
+    "ple_state_scatter_",
+    "qsa_compress_groups_with_ratio",
+    "qsa_mqa_paged",
+    "qsa_select_paged_tokens",
+    "qsa_sparse_paged_attention",
+    "qsa_store_cache_rows",
     "reglu",
     "reshape_and_cache",
     "reshape_and_cache_flash",
