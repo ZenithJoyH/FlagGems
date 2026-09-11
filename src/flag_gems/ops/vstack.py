@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 @triton.autotune(
     configs=runtime.get_tuned_config("vstack"),
     key=[
-        "max_tile_elems",
+        "max_tile_elems_bucket",
     ],
 )
 @triton.jit
@@ -51,6 +51,7 @@ def vstack_kernel(
     total_row_offset,
     row_stride,
     max_tile_elems,
+    max_tile_elems_bucket,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid_x = ext.program_id(axis=0)
@@ -128,6 +129,7 @@ def vstack(tensors: list):
                 local_row.append(local_row[-1])
                 exclusive_row.append(exclusive_row[-1])
         max_tile_elems = max_rows * row_stride
+        max_tile_elems_bucket = 1 << (max_tile_elems - 1).bit_length()
         grid = lambda META: (
             triton.cdiv(max_tile_elems, META["BLOCK_SIZE"]),
             scheduled_num_tensors,
@@ -151,6 +153,7 @@ def vstack(tensors: list):
                 total_row_offset,
                 row_stride,
                 max_tile_elems,
+                max_tile_elems_bucket,
             )
             total_row_offset += array_row_offset
     return output
