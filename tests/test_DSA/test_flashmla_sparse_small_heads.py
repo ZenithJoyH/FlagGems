@@ -18,6 +18,24 @@ import torch
 import flag_gems
 
 
+def _thead_splitk_inputs():
+    torch.manual_seed(20260915)
+    q = (torch.randn(2, 4, 576, device="cuda") * 0.05).to(torch.bfloat16)
+    kv = (torch.randn(2048, 1, 576, device="cuda") * 0.05).to(
+        torch.bfloat16
+    )
+    indices = torch.arange(2048, device="cuda", dtype=torch.int32)
+    indices = indices.view(1, 1, 2048).expand(2, 1, 2048).contiguous()
+    indices[1, 0, -8:] = -1
+    lengths = torch.tensor([0, 2048], device="cuda", dtype=torch.int32)
+    sinks = torch.tensor(
+        [float("inf"), float("-inf"), -0.5, 0.5],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    return q, kv, indices, lengths, sinks
+
+
 def _inputs(heads: int):
     torch.manual_seed(20260907)
     q = (torch.randn(2, heads, 576, device="cuda") * 0.05).to(torch.bfloat16)
@@ -78,6 +96,58 @@ def test_flash_mla_sparse_small_heads_graph_replay_changed_input():
     expected = _reference(q, kv, indices, lengths, sinks, scale)
     graph.replay()
     torch.cuda.synchronize()
+    torch.testing.assert_close(actual[0], expected[0], atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual[1], expected[1], atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual[2], expected[2], atol=2e-2, rtol=2e-2)
+
+
+@pytest.mark.skipif(flag_gems.vendor_name != "thead", reason="T-Head only")
+def test_flash_mla_sparse_thead_splitk_boundaries():
+    from flag_gems.fused.flashmla_sparse import (
+        flash_mla_sparse_fwd as generic_flash_mla_sparse_fwd,
+    )
+
+    q, kv, indices, lengths, sinks = _thead_splitk_inputs()
+    scale = 576**-0.5
+    expected = generic_flash_mla_sparse_fwd(
+        q, kv, indices, scale, attn_sink=sinks, topk_length=lengths
+    )
+    actual = flag_gems.flash_mla_sparse_fwd(
+        q, kv, indices, scale, attn_sink=sinks, topk_length=lengths
+    )
+    torch.cuda.synchronize()
+
+    assert flag_gems.flash_mla_sparse_fwd.__module__.endswith(
+        "_thead.fused.flashmla_sparse"
+    )
+    for value in actual:
+        assert not torch.isnan(value).any()
+    torch.testing.assert_close(actual[0], expected[0], atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual[1], expected[1], atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual[2], expected[2], atol=2e-2, rtol=2e-2)
+
+
+@pytest.mark.skipif(flag_gems.vendor_name != "thead", reason="T-Head only")
+def test_flash_mla_sparse_thead_splitk_graph_replay():
+    q, kv, indices, lengths, sinks = _thead_splitk_inputs()
+    lengths.fill_(2048)
+    scale = 576**-0.5
+    flag_gems.flash_mla_sparse_fwd(
+        q, kv, indices, scale, attn_sink=sinks, topk_length=lengths
+    )
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        actual = flag_gems.flash_mla_sparse_fwd(
+            q, kv, indices, scale, attn_sink=sinks, topk_length=lengths
+        )
+    graph.replay()
+    graph.replay()
+    q.add_(0.01)
+    graph.replay()
+    torch.cuda.synchronize()
+
+    expected = _reference(q, kv, indices, lengths, sinks, scale)
     torch.testing.assert_close(actual[0], expected[0], atol=2e-2, rtol=2e-2)
     torch.testing.assert_close(actual[1], expected[1], atol=2e-2, rtol=2e-2)
     torch.testing.assert_close(actual[2], expected[2], atol=2e-2, rtol=2e-2)
