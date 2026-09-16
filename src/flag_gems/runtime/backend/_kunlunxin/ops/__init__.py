@@ -24,6 +24,9 @@ from ._batch_norm_impl_index import batch_norm_impl_index as _batch_norm_impl_in
 from ._batch_norm_no_update import _batch_norm_no_update
 from ._dyn_quant_pack_4bit_weight import _dyn_quant_pack_4bit_weight
 from ._embedding_bag_dense_backward import _embedding_bag_dense_backward
+from ._embedding_bag_per_sample_weights_backward import (  # noqa: F401
+    _embedding_bag_per_sample_weights_backward,
+)
 from ._euclidean_dist import _euclidean_dist
 from ._functional_sym_constrain_range import _functional_sym_constrain_range
 from ._functional_sym_constrain_range_for_size import (
@@ -32,6 +35,9 @@ from ._functional_sym_constrain_range_for_size import (
 from ._fused_adam import _fused_adam, _fused_adam_
 from ._fused_rms_norm import _fused_rms_norm  # noqa: F401
 from ._is_all_true import _is_all_true
+from ._jagged_to_padded_dense_forward import (  # noqa: F401
+    _jagged_to_padded_dense_forward,
+)
 from ._native_batch_norm_legit_functional import _native_batch_norm_legit_functional
 from ._native_batch_norm_legit_no_training import _native_batch_norm_legit_no_training
 from ._nested_view_from_buffer_copy import _nested_view_from_buffer_copy
@@ -46,13 +52,14 @@ from ._unsafe_masked_index_put_accumulate import _unsafe_masked_index_put_accumu
 from ._upsample_bilinear2d_aa import _upsample_bilinear2d_aa  # noqa: F401
 from ._upsample_nearest_exact2d_backward import _upsample_nearest_exact2d_backward
 from .abs import abs, abs_
-from .absolute import absolute
-from .acos import acos
+from .absolute import absolute, absolute_
+from .acos import acos, acos_
 from .adaptive_avg_pool2d import adaptive_avg_pool2d
 from .adaptive_max_pool2d import adaptive_max_pool2d
 from .add import add, add_
+from .addbmm import addbmm, addbmm_  # noqa: F401
 from .addcdiv import addcdiv, addcdiv_, addcdiv_out
-from .addcmul import addcmul, addcmul_out
+from .addcmul import addcmul, addcmul_, addcmul_out
 from .addmm import addmm, addmm_dtype, addmm_dtype_out, addmm_out  # noqa: F401
 from .addmm_ import addmm_
 from .addmv import addmv, addmv_out
@@ -68,8 +75,11 @@ from .any import any, any_dim, any_dims
 from .apply_repetition_penalties import apply_repetition_penalties
 from .arange import arange, arange_start
 from .arccos import arccos, arccos_
+from .arccosh import arccosh_  # noqa: F401
 from .arcsin import arcsin, arcsin_, arcsin_out
+from .arcsinh import arcsinh, arcsinh_, arcsinh_out  # noqa: F401
 from .arctan import arctan, arctan_
+from .arctan2 import arctan2, arctan2_
 from .argmax import argmax
 from .argmin import argmin
 from .argsort import argsort
@@ -78,6 +88,8 @@ from .as_strided_scatter import as_strided_scatter
 from .asin import asin, asin_
 from .assert_async import _assert_async
 from .atan import atan, atan_
+from .atan2 import atan2, atan2_, atan2_out
+from .atanh import atanh, atanh_  # noqa: F401
 from .attention import (  # noqa: F401
     ScaleDotProductAttention,
     flash_attention_forward,
@@ -112,8 +124,22 @@ from .bitwise_or import (
     bitwise_or_tensor,
     bitwise_or_tensor_,
 )
-from .bitwise_right_shift import bitwise_right_shift
+from .bitwise_right_shift import bitwise_right_shift, bitwise_right_shift_  # noqa: F401
+from .bitwise_xor import (
+    bitwise_xor_scalar,
+    bitwise_xor_scalar_,
+    bitwise_xor_scalar_tensor,
+    bitwise_xor_tensor,
+    bitwise_xor_tensor_,
+    xor,
+    xor_,
+    xor_scalar,
+    xor_scalar_,
+    xor_scalar_tensor,
+)
+from .block_diag import block_diag  # noqa: F401
 from .bmm import bmm, bmm_out
+from .broadcast_tensors import broadcast_tensors
 from .broadcast_to import broadcast_to
 from .bucketize import bucketize
 from .cat import cat, cat_out
@@ -122,6 +148,8 @@ from .ceil import ceil, ceil_, ceil_out
 from .celu import celu, celu_
 from .cholesky_inverse import cholesky_inverse
 from .cholesky_solve import cholesky_solve, cholesky_solve_out
+from .chunk import chunk
+from .chunk_cat import chunk_cat as _chunk_cat
 from .clamp import (
     clamp,
     clamp_,
@@ -142,10 +170,12 @@ from .conv3d import conv3d
 from .conv_depthwise2d import _conv_depthwise2d
 from .conv_transpose2d import conv_transpose2d
 from .copy import copy, copy_
-from .copysign import copysign, copysign_out
+from .copysign import copysign, copysign_, copysign_out
 from .cos import cos, cos_
+from .cosh import cosh, cosh_, cosh_out  # noqa: F401
 from .count_nonzero import count_nonzero
 from .cudnn_batch_norm_backward import cudnn_batch_norm_backward  # noqa: F401
+from .cudnn_convolution import cudnn_convolution  # noqa: F401
 from .cummax import cummax
 from .cummin import cummin
 from .cumprod import cumprod, cumprod_
@@ -157,6 +187,7 @@ from .diag import diag
 from .diag_embed import diag_embed
 from .diagonal import diagonal_backward
 from .diagonal_copy import diagonal_copy
+from .diff import diff
 from .digamma import digamma
 from .digamma_ import digamma_
 from .div import (
@@ -169,18 +200,23 @@ from .div import (
     true_divide,
     true_divide_,
     true_divide_out,
+    true_divide_tensor,
 )
 from .dot import dot
 from .dropout import dropout, dropout_backward
 from .elu import elu, elu_, elu_backward
 from .embedding import embedding, embedding_backward, embedding_dense_backward
-from .eq import eq, eq_scalar
+from .empty import empty  # noqa: F401
+from .empty_permuted import empty_permuted  # noqa: F401
+from .eq import eq, eq_, eq_scalar, eq_scalar_
 from .erf import erf, erf_, special_erf
 from .erfinv import erfinv
 from .erfinv_ import erfinv_  # noqa: F401
 from .exp import exp, exp_, exp_out
 from .exp2 import exp2, exp2_
+from .expand_copy import expand_copy
 from .expm1 import expm1, expm1_, expm1_out
+from .exponential import exponential  # noqa: F401
 from .exponential_ import exponential_
 from .eye import eye
 from .eye_m import eye_m
@@ -195,15 +231,20 @@ from .fill import (
 )
 from .flip import flip
 from .floor import floor, floor_, floor_out
+from .fmax import fmax, fmax_out
+from .fmin import fmin, fmin_out
+from .fmod import fmod_scalar, fmod_scalar_, fmod_tensor, fmod_tensor_
 from .fractional_max_pool2d import fractional_max_pool2d, fractional_max_pool2d_backward
 from .full import full
 from .full_like import full_like
+from .functional_assert_async import _functional_assert_async
 from .fused_experts_impl import (
     fused_experts_impl,
     inplace_fused_experts,
     outplace_fused_experts,
 )
 from .gather import gather, gather_backward
+from .gcd import gcd, gcd_, gcd_out
 from .ge import ge, ge_scalar, greater_equal_
 from .gelu import gelu, gelu_, gelu_backward
 from .geometric import geometric, geometric_  # noqa: F401
@@ -215,11 +256,14 @@ from .grid_sample import grid_sample
 from .grid_sampler_3d_backward import grid_sampler_3d_backward
 from .grouped_mm import group_mm
 from .groupnorm import group_norm, group_norm_backward
-from .gt import gt, gt_scalar
+from .gt import gt, gt_scalar, gt_scalar_, gt_tensor_
 from .hadamard_transform import hadamard_transform
 from .hardsigmoid import hardsigmoid, hardsigmoid_out
+from .heaviside_ import heaviside_  # noqa: F401
 from .histc import histc
 from .hstack import hstack
+from .hypot import hypot
+from .igamma_ import igamma_  # noqa: F401
 from .igammac import igammac, igammac_out
 from .igammac_ import igammac_
 from .im2col import im2col
@@ -236,15 +280,20 @@ from .isfinite import isfinite
 from .isin import isin
 from .isinf import isinf
 from .isnan import isnan
+from .isneginf import isneginf, isneginf_out
+from .isposinf import isposinf
 from .kron import kron
 from .kthvalue import kthvalue
 from .layernorm import layer_norm, layer_norm_backward
-from .le import le, le_scalar
+from .lcm import lcm, lcm_
+from .le import le, le_, le_scalar
 from .leaky_relu import leaky_relu, leaky_relu_, leaky_relu_backward, leaky_relu_out
 from .lerp import lerp_scalar, lerp_scalar_, lerp_tensor, lerp_tensor_
 from .less_equal import less_equal, less_equal_scalar
 from .lgamma import lgamma, lgamma_
+from .lift_fresh import lift_fresh  # noqa: F401
 from .lift_fresh_copy import lift_fresh_copy
+from .lift_out import lift_out  # noqa: F401
 from .linalg_cholesky import linalg_cholesky
 from .linalg_cross import linalg_cross, linalg_cross_out
 from .linalg_det import linalg_det, linalg_det_out
@@ -252,6 +301,7 @@ from .linalg_householder_product import linalg_householder_product
 from .linalg_ldl_factor import ldl_factor
 from .linalg_ldl_factor_ex import ldl_factor_ex
 from .linalg_lstsq import linalg_lstsq
+from .linalg_lu import linalg_lu, linalg_lu_out  # noqa: F401
 from .linalg_lu_factor import linalg_lu_factor, linalg_lu_factor_out
 from .linalg_lu_factor_ex import linalg_lu_factor_ex, linalg_lu_factor_ex_out
 from .linalg_matrix_norm import linalg_matrix_norm
@@ -266,6 +316,7 @@ from .log import log
 from .log1p import log1p, log1p_
 from .log2 import log2, log2_
 from .log10 import log10, log10_, log10_out  # noqa: F401
+from .log_ import log_  # noqa: F401
 from .log_sigmoid import log_sigmoid
 from .log_sigmoid_backward import log_sigmoid_backward, log_sigmoid_backward_out
 from .log_sigmoid_forward import log_sigmoid_forward
@@ -324,13 +375,16 @@ from .mvlgamma_ import mvlgamma_
 from .nan_to_num import nan_to_num
 from .nanmedian import nanmedian, nanmedian_dim, nanmedian_dim_values, nanmedian_out
 from .nansum import nansum, nansum_out
+from .narrow import narrow  # noqa: F401
 from .narrow_copy import narrow_copy
 from .native_batch_norm import native_batch_norm
+from .native_dropout_backward import native_dropout_backward
 from .native_group_norm import native_group_norm
 from .native_layer_norm import native_layer_norm
-from .ne import ne, ne_scalar
+from .ne import ne, ne_, ne_scalar, ne_scalar_
 from .neg import neg, neg_
 from .negative import negative
+from .negative_ import negative_
 from .new_full import new_full
 from .new_ones import new_ones
 from .nllloss import (
@@ -407,6 +461,7 @@ from .replication_pad2d_backward import (
 from .replication_pad3d import replication_pad3d  # noqa: F401
 from .replication_pad3d_backward import replication_pad3d_backward  # noqa: F401
 from .resize import resize, resize_
+from .resize_output import _resize_output, _resize_output_  # noqa: F401
 from .resolve_conj import resolve_conj
 from .resolve_neg import resolve_neg
 from .rms_norm import rms_norm, rms_norm_backward, rms_norm_forward
@@ -414,6 +469,7 @@ from .rnn_relu import rnn_relu
 from .roll import roll
 from .rot90 import rot90
 from .round import round, round_, round_out
+from .rrelu_with_noise_backward import rrelu_with_noise_backward
 from .rsqrt import rsqrt, rsqrt_
 from .rsub import rsub, rsub_scalar, rsub_tensor
 from .safe_softmax import _safe_softmax
@@ -438,8 +494,10 @@ from .segment_reduce import (
 from .select_backward import select_backward
 from .select_scatter import select_scatter
 from .selu import selu, selu_
+from .sgn import sgn, sgn_out
 from .sgn_ import sgn_
 from .sigmoid import sigmoid, sigmoid_, sigmoid_backward
+from .sign import sign, sign_out
 from .signbit import signbit, signbit_out
 from .silu import silu, silu_, silu_backward
 from .sin import sin, sin_
@@ -487,6 +545,7 @@ from .special_modified_bessel_k0 import (
 )
 from .special_multigammaln import special_multigammaln
 from .special_ndtri import special_ndtri
+from .special_round import special_round, special_round_out
 from .special_shifted_chebyshev_polynomial_t import (
     special_shifted_chebyshev_polynomial_t,
 )
@@ -502,6 +561,7 @@ from .special_shifted_chebyshev_polynomial_w import (
 )
 from .split_with_sizes_copy import split_with_sizes_copy  # noqa: F401
 from .sqrt import sqrt, sqrt_
+from .square import square, square_, square_out
 from .squeeze_copy import squeeze_copy  # noqa: F401
 from .stack import stack
 from .std import std
@@ -525,6 +585,8 @@ from .uniform import uniform_
 from .unique import _unique2
 from .unique_consecutive import unique_consecutive
 from .unique_dim import unique_dim
+from .unsafe_chunk import unsafe_chunk  # noqa: F401
+from .unsqueeze import unsqueeze_  # noqa: F401 (in-place dim insertion, XPU fast path)
 from .upsample_bicubic2d_aa import _upsample_bicubic2d_aa
 from .upsample_bicubic2d_aa_backward import _upsample_bicubic2d_aa_backward
 from .upsample_linear1d import upsample_linear1d
@@ -533,6 +595,7 @@ from .upsample_nearest1d import upsample_nearest1d
 from .upsample_nearest2d import upsample_nearest2d
 from .upsample_nearest3d import upsample_nearest3d
 from .upsample_trilinear3d import upsample_trilinear3d
+from .var import var, var_correction, var_dim
 from .var_mean import var_mean
 from .vdot import vdot
 from .vector_norm import vector_norm
@@ -559,10 +622,12 @@ __all__ = [
     "_batch_norm_impl_index",
     "_batch_norm_no_update",
     "_cdist_backward",
+    "_chunk_cat",
     "_conv_depthwise2d",
     "_dyn_quant_pack_4bit_weight",
     "_embedding_bag_dense_backward",
     "_euclidean_dist",
+    "_functional_assert_async",
     "_functional_sym_constrain_range",
     "_functional_sym_constrain_range_for_size",
     "_fused_adam",
@@ -588,7 +653,9 @@ __all__ = [
     "abs",
     "abs_",
     "absolute",
+    "absolute_",
     "acos",
+    "acos_",
     "adaptive_avg_pool2d",
     "adaptive_max_pool2d",
     "add",
@@ -597,6 +664,7 @@ __all__ = [
     "addcdiv_",
     "addcdiv_out",
     "addcmul",
+    "addcmul_",
     "addcmul_out",
     "addmm",
     "addmm_",
@@ -627,6 +695,8 @@ __all__ = [
     "arcsin_",
     "arcsin_out",
     "arctan",
+    "arctan2",
+    "arctan2_",
     "arctan_",
     "argmax",
     "argmin",
@@ -637,6 +707,9 @@ __all__ = [
     "asin",
     "asin_",
     "atan",
+    "atan2",
+    "atan2_",
+    "atan2_out",
     "atan_",
     "avg_pool2d",
     "avg_pool2d_backward",
@@ -667,8 +740,14 @@ __all__ = [
     "bitwise_or_tensor",
     "bitwise_or_tensor_",
     "bitwise_right_shift",
+    "bitwise_xor_scalar",
+    "bitwise_xor_scalar_",
+    "bitwise_xor_scalar_tensor",
+    "bitwise_xor_tensor",
+    "bitwise_xor_tensor_",
     "bmm",
     "bmm_out",
+    "broadcast_tensors",
     "broadcast_to",
     "bucketize",
     "cat",
@@ -681,6 +760,7 @@ __all__ = [
     "cholesky_inverse",
     "cholesky_solve",
     "cholesky_solve_out",
+    "chunk",
     "clamp",
     "clamp_",
     "clamp_max",
@@ -702,6 +782,7 @@ __all__ = [
     "copy",
     "copy_",
     "copysign",
+    "copysign_",
     "copysign_out",
     "cos",
     "cos_",
@@ -721,6 +802,7 @@ __all__ = [
     "diag_embed",
     "diagonal_backward",
     "diagonal_copy",
+    "diff",
     "digamma",
     "digamma_",
     "div_mode",
@@ -735,7 +817,9 @@ __all__ = [
     "embedding_backward",
     "embedding_dense_backward",
     "eq",
+    "eq_",
     "eq_scalar",
+    "eq_scalar_",
     "erf",
     "erf_",
     "erfinv",
@@ -744,9 +828,11 @@ __all__ = [
     "exp2_",
     "exp_",
     "exp_out",
+    "expand_copy",
     "expm1",
     "expm1_",
     "expm1_out",
+    "exponential",
     "exponential_",
     "eye",
     "eye_m",
@@ -766,6 +852,14 @@ __all__ = [
     "floor_divide",
     "floor_divide_",
     "floor_out",
+    "fmax",
+    "fmax_out",
+    "fmin",
+    "fmin_out",
+    "fmod_scalar",
+    "fmod_scalar_",
+    "fmod_tensor",
+    "fmod_tensor_",
     "fractional_max_pool2d",
     "fractional_max_pool2d_backward",
     "full",
@@ -773,11 +867,16 @@ __all__ = [
     "fused_experts_impl",
     "gather",
     "gather_backward",
+    "gcd",
+    "gcd_",
+    "gcd_out",
     "ge",
     "ge_scalar",
     "gelu",
     "gelu_",
     "gelu_backward",
+    "geometric",
+    "geometric_",
     "get_paged_mqa_logits_metadata",
     "get_scheduler_metadata",
     "glu",
@@ -794,11 +893,14 @@ __all__ = [
     "group_norm_backward",
     "gt",
     "gt_scalar",
+    "gt_scalar_",
+    "gt_tensor_",
     "hadamard_transform",
     "hardsigmoid",
     "hardsigmoid_out",
     "histc",
     "hstack",
+    "hypot",
     "igammac",
     "igammac_",
     "igammac_out",
@@ -818,13 +920,19 @@ __all__ = [
     "isin",
     "isinf",
     "isnan",
+    "isneginf",
+    "isneginf_out",
+    "isposinf",
     "kron",
     "kthvalue",
     "layer_norm",
     "layer_norm_backward",
+    "lcm",
+    "lcm_",
     "ldl_factor",
     "ldl_factor_ex",
     "le",
+    "le_",
     "le_scalar",
     "leaky_relu",
     "leaky_relu_",
@@ -944,13 +1052,17 @@ __all__ = [
     "nansum_out",
     "narrow_copy",
     "native_batch_norm",
+    "native_dropout_backward",
     "native_group_norm",
     "native_layer_norm",
     "ne",
+    "ne_",
     "ne_scalar",
+    "ne_scalar_",
     "neg",
     "neg_",
     "negative",
+    "negative_",
     "new_full",
     "new_ones",
     "nll_loss2d",
@@ -1045,6 +1157,7 @@ __all__ = [
     "round",
     "round_",
     "round_out",
+    "rrelu_with_noise_backward",
     "rsqrt",
     "rsqrt_",
     "rsub",
@@ -1076,10 +1189,14 @@ __all__ = [
     "select_scatter",
     "selu",
     "selu_",
+    "sgn",
     "sgn_",
+    "sgn_out",
     "sigmoid",
     "sigmoid_",
     "sigmoid_backward",
+    "sign",
+    "sign_out",
     "signbit",
     "signbit_out",
     "silu",
@@ -1138,6 +1255,8 @@ __all__ = [
     "special_modified_bessel_k0_out",
     "special_multigammaln",
     "special_ndtri",
+    "special_round",
+    "special_round_out",
     "special_shifted_chebyshev_polynomial_t",
     "special_shifted_chebyshev_polynomial_u",
     "special_shifted_chebyshev_polynomial_u_",
@@ -1146,6 +1265,9 @@ __all__ = [
     "special_sinc",
     "sqrt",
     "sqrt_",
+    "square",
+    "square_",
+    "square_out",
     "stack",
     "std",
     "sub",
@@ -1179,6 +1301,7 @@ __all__ = [
     "true_divide",
     "true_divide_",
     "true_divide_out",
+    "true_divide_tensor",
     "trunc",
     "trunc_",
     "unfold_copy",
@@ -1191,6 +1314,9 @@ __all__ = [
     "upsample_nearest2d",
     "upsample_nearest3d",
     "upsample_trilinear3d",
+    "var",
+    "var_correction",
+    "var_dim",
     "var_mean",
     "vdot",
     "vector_norm",
@@ -1208,6 +1334,11 @@ __all__ = [
     "xlogy_scalar_tensor_out",
     "xlogy_tensor_scalar",
     "xlogy_tensor_scalar_out",
+    "xor",
+    "xor_",
+    "xor_scalar",
+    "xor_scalar_",
+    "xor_scalar_tensor",
     "zero",
     "zero_",
     "zero_out",
