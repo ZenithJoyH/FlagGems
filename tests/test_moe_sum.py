@@ -47,3 +47,18 @@ def test_moe_sum(shape, dtype):
         flag_gems.moe_sum(inp1, res_out)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+
+
+@pytest.mark.moe_sum
+@pytest.mark.skipif(flag_gems.vendor_name != "thead", reason="T-Head specialization")
+@pytest.mark.parametrize("m", [1, 256, 513, 2048])
+def test_thead_hy4_moe_sum_specialization(m):
+    shape = (m, 8, 6144)
+    inp = torch.randn(shape, dtype=torch.bfloat16, device=flag_gems.device)
+    out = torch.empty((m, shape[-1]), dtype=inp.dtype, device=inp.device)
+    reference = torch.sum(utils.to_reference(inp), dim=1)
+
+    with flag_gems.use_gems():
+        flag_gems.moe_sum(inp, out)
+
+    utils.gems_assert_close(out, reference, inp.dtype)

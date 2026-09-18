@@ -23,6 +23,9 @@ import triton.language as tl
 from flag_gems.fused.flashmla_sparse import (
     flash_mla_sparse_fwd as _generic_flash_mla_sparse_fwd,
 )
+from flag_gems.fused.flashmla_sparse import (
+    triton_flash_mla_sparse_fwd as _triton_flash_mla_sparse_fwd,
+)
 
 
 _SPLITK_HQ = 4
@@ -32,6 +35,8 @@ _SPLITK_TOPK = 2048
 _SPLITK_BK = 64
 _SPLITK_BDP = 256
 _SPLITK_MAX_SQ = 64
+_HQ4_PREFILL_MIN_SQ = 128
+_HQ4_PREFILL_MAX_SQ = 2048
 
 
 @triton.jit
@@ -261,6 +266,91 @@ def _can_use_thead_splitk(
     )
 
 
+def _can_use_thead_hq4_prefill(
+    q: torch.Tensor,
+    kv: torch.Tensor,
+    indices: torch.Tensor,
+    d_v: int,
+    attn_sink: Optional[torch.Tensor],
+    topk_length: Optional[torch.Tensor],
+) -> bool:
+    return (
+        q.device.type == "cuda"
+        and q.dtype == torch.bfloat16
+        and kv.dtype == torch.bfloat16
+        and indices.dtype == torch.int32
+        and q.is_contiguous()
+        and kv.is_contiguous()
+        and indices.is_contiguous()
+        and _HQ4_PREFILL_MIN_SQ <= q.shape[0] <= _HQ4_PREFILL_MAX_SQ
+        and q.shape[1:] == (_SPLITK_HQ, _SPLITK_DQK)
+        and kv.ndim == 3
+        and kv.shape[1:] == (1, _SPLITK_DQK)
+        and indices.shape == (q.shape[0], 1, _SPLITK_TOPK)
+        and d_v == _SPLITK_DV
+        and attn_sink is not None
+        and attn_sink.dtype == torch.float32
+        and attn_sink.is_contiguous()
+        and attn_sink.shape == (_SPLITK_HQ,)
+        and topk_length is not None
+        and topk_length.dtype == torch.int32
+        and topk_length.is_contiguous()
+        and topk_length.shape == (q.shape[0],)
+    )
+
+
+def _flash_mla_sparse_hq4_prefill(
+    q: torch.Tensor,
+    kv: torch.Tensor,
+    indices: torch.Tensor,
+    sm_scale: float,
+    attn_sink: torch.Tensor,
+    topk_length: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    sq = q.shape[0]
+    skv = kv.shape[0]
+    output = torch.empty(
+        (sq, _SPLITK_HQ, _SPLITK_DV), device=q.device, dtype=q.dtype
+    )
+    max_logits = torch.empty(
+        (sq, _SPLITK_HQ), device=q.device, dtype=torch.float32
+    )
+    lse = torch.empty_like(max_logits)
+    _triton_flash_mla_sparse_fwd.fn[(sq,)](
+        q,
+        kv,
+        indices,
+        attn_sink,
+        topk_length,
+        sm_scale,
+        output,
+        max_logits,
+        lse,
+        q.stride(1),
+        q.stride(0),
+        kv.stride(1),
+        kv.stride(0),
+        indices.stride(1),
+        indices.stride(0),
+        output.stride(1),
+        output.stride(0),
+        max_logits.stride(0),
+        lse.stride(0),
+        sq,
+        _SPLITK_HQ,
+        _SPLITK_DQK,
+        skv,
+        _SPLITK_TOPK,
+        True,
+        True,
+        BK=32,
+        BH=_SPLITK_HQ,
+        num_warps=4,
+        num_stages=1,
+    )
+    return output, max_logits, lse
+
+
 def flash_mla_sparse_fwd(
     q: torch.Tensor,
     kv: torch.Tensor,
@@ -270,7 +360,19 @@ def flash_mla_sparse_fwd(
     attn_sink: Optional[torch.Tensor] = None,
     topk_length: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Use Split-K for the small-head HY4 shape and preserve generic fallback."""
+    """Use T-Head HY4 specializations and preserve generic fallback."""
+    if _can_use_thead_hq4_prefill(
+        q, kv, indices, d_v, attn_sink, topk_length
+    ):
+        return _flash_mla_sparse_hq4_prefill(
+            q,
+            kv,
+            indices,
+            sm_scale,
+            attn_sink,
+            topk_length,
+        )
+
     if not _can_use_thead_splitk(
         q, kv, indices, d_v, attn_sink, topk_length
     ):

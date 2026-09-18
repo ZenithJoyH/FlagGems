@@ -18,6 +18,8 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_gems.runtime import device
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +78,37 @@ def moe_sum(
     input_strides = input.stride()
     output_strides = output.stride()
     grid = lambda meta: (num_tokens, triton.cdiv(hidden_size, meta["BLOCK_SIZE"]))
+
+    # HY4's router always reduces [M, 8, 6144] BF16 tensors.  Bypassing the
+    # generic autotuner for this stable T-Head shape removes its per-call host
+    # dispatch cost while preserving the same kernel and FP32 reduction order.
+    use_thead_hy4_config = (
+        device.vendor_name == "thead"
+        and input.dtype == torch.bfloat16
+        and topk == 8
+        and hidden_size == 6144
+        and input.is_contiguous()
+        and output.is_contiguous()
+    )
+    if use_thead_hy4_config:
+        block_size, num_warps = (256, 4) if num_tokens <= 512 else (512, 8)
+        fixed_grid = (num_tokens, triton.cdiv(hidden_size, block_size))
+        moe_sum_kernel.fn[fixed_grid](
+            input,
+            output,
+            num_tokens,
+            topk,
+            hidden_size,
+            input_strides[0],
+            input_strides[1],
+            input_strides[2],
+            output_strides[0],
+            output_strides[1],
+            BLOCK_SIZE=block_size,
+            num_warps=num_warps,
+        )
+        return
+
     moe_sum_kernel[grid](
         input,
         output,
