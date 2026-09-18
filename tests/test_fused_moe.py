@@ -98,43 +98,6 @@ def test_w8a8_excludes_plain_half_gemm_config(num_tokens, gemm_stage):
     )
 
 
-@pytest.mark.parametrize(
-    "device_name,num_tokens,expected_warps",
-    [
-        ("PPU-ZW810E", 255, 8),
-        ("PPU-ZW810E", 256, 4),
-        ("PPU-ZW810E", 2048, 4),
-        ("another_device", 256, 8),
-    ],
-)
-def test_thead_ppu_w8a8_uses_four_warps_from_256_tokens(
-    monkeypatch, device_name, num_tokens, expected_warps
-):
-    monkeypatch.setattr(moe, "_get_device_name", lambda: device_name)
-    config = moe.get_default_config(
-        num_tokens,
-        256,
-        256,
-        6144,
-        8,
-        "int8_w8a8",
-    )
-    assert config["num_warps"] == expected_warps
-
-
-def test_thead_ppu_w8a8_small_tokens_keep_existing_four_warps(monkeypatch):
-    monkeypatch.setattr(moe, "_get_device_name", lambda: "PPU-ZW810E")
-    config = moe.get_default_config(
-        128,
-        256,
-        256,
-        6144,
-        8,
-        "int8_w8a8",
-    )
-    assert config["num_warps"] == 4
-
-
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_plain_half_gemm_optimization_remains_enabled(dtype):
     config = moe.get_default_config(
@@ -154,28 +117,6 @@ def _quantize_reference(x):
     scale = x.abs().amax(dim=-1, keepdim=True).float().clamp_min(1e-10) / 127
     quantized = (x.float() / scale).round().clamp(-128, 127)
     return quantized, scale
-
-
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("hidden_size", [128, 256, 6144])
-def test_thead_dynamic_per_token_int8_quant_is_exact(dtype, hidden_size):
-    if moe._get_device_name() != "PPU-ZW810E":
-        pytest.skip("T-Head PPU-specific fused quantization regression")
-    generator = torch.Generator(device="cpu").manual_seed(20260916 + hidden_size)
-    x = torch.randn(7, hidden_size, generator=generator, dtype=dtype)
-    x[0].zero_()
-    x[1, :8] = torch.tensor(
-        [-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5], dtype=dtype
-    )
-    x = x.to(flag_gems.device)
-    expected_q, expected_scale = _quantize_reference(x)
-    actual_q, actual_scale = moe._int8_quantize(
-        x,
-        A_scale=None,
-        per_act_token=True,
-    )
-    assert torch.equal(actual_q, expected_q.to(torch.int8))
-    assert torch.equal(actual_scale, expected_scale)
 
 
 def _w8a8_reference(x, w1, w2, weights, ids, s1, s2):

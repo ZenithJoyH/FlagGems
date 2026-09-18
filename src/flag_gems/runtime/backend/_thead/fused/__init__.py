@@ -13,5 +13,13 @@
 # limitations under the License.
 
 from .flashmla_sparse import flash_mla_sparse_fwd
+from .fused_moe import fused_experts_impl, inplace_fused_experts, outplace_fused_experts
+from .moe_sum import moe_sum
 
-__all__ = ["flash_mla_sparse_fwd"]
+__all__ = [
+    "flash_mla_sparse_fwd",
+    "fused_experts_impl",
+    "inplace_fused_experts",
+    "moe_sum",
+    "outplace_fused_experts",
+]

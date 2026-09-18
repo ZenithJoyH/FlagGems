@@ -22,13 +22,12 @@ import torch
 import torch.nn.functional as F
 import triton
 import triton.language as tl
-import triton.language.extra.libdevice as libdevice
 import yaml
 
 from flag_gems.fused.moe_align_block_size import moe_align_block_size
 from flag_gems.fused.moe_sum import moe_sum
 from flag_gems.runtime import device, torch_device_fn
-from flag_gems.utils import libentry, pointwise_dynamic
+from flag_gems.utils import pointwise_dynamic
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,6 @@ MOE_DIRECT_SUM_MIN_TOKENS = 4096
 _HALF_GEMM_TILE_M = 128
 _HALF_GEMM_TILE_K = 64
 _HALF_GEMM2_TILE_N = 256
-_THEAD_PPU_W8A8_FOUR_WARP_MIN_TOKENS = 256
 _PLAIN_HALF_CONFIG_DTYPES = ("fp16", "bf16")
 
 
@@ -488,12 +486,7 @@ def get_default_config(
             group_m = 1
 
         # Prefer 4 warps for small tiles; only use 8 for large M
-        use_thead_ppu_w8a8_four_warps = (
-            dtype == "int8_w8a8"
-            and _get_device_name() == "PPU-ZW810E"
-            and M >= _THEAD_PPU_W8A8_FOUR_WARP_MIN_TOKENS
-        )
-        num_warps = 4 if M <= 128 or use_thead_ppu_w8a8_four_warps else 8
+        num_warps = 4 if M <= 128 else 8
         num_stages = 3
 
         smem_per_stage = (block_m * block_k + block_k * block_n) * 2
@@ -710,57 +703,6 @@ def _fp8_quantize(
             return A_q, scale.view(1)
 
 
-@libentry()
-@triton.jit
-def _thead_dynamic_per_token_int8_quant_kernel(
-    input_ptr,
-    output_ptr,
-    scale_ptr,
-    hidden_size: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    token_idx = tl.program_id(0)
-    offsets = tl.arange(0, BLOCK_SIZE)
-    mask = offsets < hidden_size
-    values = tl.load(
-        input_ptr + token_idx * hidden_size + offsets,
-        mask=mask,
-        other=0.0,
-    ).to(tl.float32)
-    absmax = tl.max(tl.abs(values), axis=0)
-    absmax = tl.maximum(absmax, 1e-10)
-    scale = absmax / 127.0
-    quantized = libdevice.rint(libdevice.div_rn(values, scale))
-    quantized = tl.minimum(tl.maximum(quantized, -128.0), 127.0)
-    tl.store(
-        output_ptr + token_idx * hidden_size + offsets,
-        quantized.to(tl.int8),
-        mask=mask,
-    )
-    tl.store(scale_ptr + token_idx, scale)
-
-
-def _thead_dynamic_per_token_int8_quant(
-    A: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    original_shape = A.shape
-    A_flat = A.reshape(-1, A.shape[-1])
-    output = torch.empty_like(A_flat, dtype=torch.int8)
-    scale = torch.empty(
-        (A_flat.shape[0], 1), device=A.device, dtype=torch.float32
-    )
-    block_size = triton.next_power_of_2(A_flat.shape[1])
-    with torch_device_fn.device(A.device):
-        _thead_dynamic_per_token_int8_quant_kernel[(A_flat.shape[0],)](
-            A_flat,
-            output,
-            scale,
-            hidden_size=A_flat.shape[1],
-            BLOCK_SIZE=block_size,
-        )
-    return output.reshape(original_shape), scale.reshape(original_shape[:-1] + (1,))
-
-
 def _int8_quantize(
     A: torch.Tensor,
     A_scale: Optional[torch.Tensor],
@@ -794,12 +736,6 @@ def _int8_quantize(
         return A_q, scale
 
     elif per_act_token:
-        if (
-            _get_device_name() == "PPU-ZW810E"
-            and A.is_contiguous()
-            and 0 < A.shape[-1] <= 8192
-        ):
-            return _thead_dynamic_per_token_int8_quant(A)
         A_flat = A.reshape(-1, A.size(-1))
         amax = A_flat.abs().amax(dim=-1, keepdim=True).clamp(min=eps).to(torch.float32)
         scale = amax / int8_max
