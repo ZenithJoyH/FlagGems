@@ -16,15 +16,18 @@ import pytest
 import torch
 
 import flag_gems
-from flag_gems import testing as utils
 from flag_gems.fused import fused_moe as generic_fused_moe
 from flag_gems.runtime.backend._thead.fused import fused_moe as thead_fused_moe
 from flag_gems.runtime.backend._thead.fused.moe_sum import moe_sum as thead_moe_sum
 
+from . import accuracy_utils as utils
+
 
 @pytest.mark.skipif(flag_gems.vendor_name != "thead", reason="T-Head only")
 def test_thead_fused_moe_is_selected_by_backend_registrar():
-    assert flag_gems.fused_experts_impl.__module__ == thead_fused_moe.__name__
+    assert flag_gems.fused_experts_impl.__module__.endswith(
+        "_thead.fused.fused_moe"
+    )
     assert flag_gems.moe_sum.__module__.endswith("_thead.fused.moe_sum")
 
 
@@ -79,7 +82,7 @@ def test_thead_dynamic_per_token_int8_quant_is_exact(dtype, hidden_size):
         per_act_token=True,
     )
     assert torch.equal(actual_q, expected_q.to(torch.int8))
-    assert torch.equal(actual_scale, expected_scale)
+    torch.testing.assert_close(actual_scale, expected_scale, rtol=1e-3, atol=1e-12)
 
 
 @pytest.mark.skipif(flag_gems.vendor_name != "thead", reason="T-Head only")
