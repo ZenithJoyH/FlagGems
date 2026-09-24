@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import os
+import time
+from functools import wraps
 from hashlib import md5
 from itertools import chain
 from typing import (
@@ -38,6 +40,26 @@ from .model import PersistantModel
 from .session import RollbackSession
 
 
+def retry_sqlite_locked(method):
+    """Retry transient inter-process SQLite locks; preserve other SQL failures."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        for attempt in range(4):
+            try:
+                return method(self, *args, **kwargs)
+            except sqlalchemy.exc.OperationalError as error:
+                if (
+                    self.engine.dialect.name != "sqlite"
+                    or "database is locked" not in str(error).lower()
+                    or attempt == 3
+                ):
+                    raise
+                time.sleep(0.1 * (2**attempt))
+
+    return wrapped
+
+
 class Base(sqlalchemy.orm.DeclarativeBase): ...
 
 
@@ -46,7 +68,12 @@ class SQLPersistantModel(PersistantModel):
 
     def __init__(self, db_url: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.engine: Final[sqlalchemy.engine.Engine] = sqlalchemy.create_engine(db_url)
+        # TP workers may create the same autotune table concurrently. Give the
+        # SQLite writer a bounded wait before the lock-specific retry below.
+        connect_args = {"timeout": 15.0} if db_url.startswith("sqlite:") else {}
+        self.engine: Final[sqlalchemy.engine.Engine] = sqlalchemy.create_engine(
+            db_url, connect_args=connect_args
+        )
         self.sql_model_pool: Dict[str, Type[Base]] = {}
 
     @staticmethod
@@ -184,6 +211,7 @@ class SQLPersistantModel(PersistantModel):
             if isinstance(v, (int, float, str, bool))
         }
 
+    @retry_sqlite_locked
     def get_sql_model(
         self,
         name: str,
@@ -239,6 +267,7 @@ class SQLPersistantModel(PersistantModel):
             return ModelCls
 
     @override
+    @retry_sqlite_locked
     def get_config(
         self, name: str, keys: Sequence[Union[bool, int, float, str]]
     ) -> Optional[triton.Config]:
@@ -280,6 +309,7 @@ class SQLPersistantModel(PersistantModel):
             return triton.Config(kwargs, **config_dict)
 
     @override
+    @retry_sqlite_locked
     def get_benchmark(
         self,
         name: str,
@@ -310,6 +340,7 @@ class SQLPersistantModel(PersistantModel):
             p80: float = obj.p80
             return (p50, p20, p80)
 
+    @retry_sqlite_locked
     def put_config(
         self,
         name: str,
@@ -337,6 +368,7 @@ class SQLPersistantModel(PersistantModel):
                 session.add(ConfigCls(**key_dict, **config))
                 session.commit()
 
+    @retry_sqlite_locked
     def put_benchmark(
         self,
         name: str,
