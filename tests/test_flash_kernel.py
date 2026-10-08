@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import flag_gems
 import pytest
 import torch
 import triton
+
+import flag_gems
 from flag_gems.ops.flash_kernel import flash_fwd_splitkv_combine_kernel
 from flag_gems.runtime import torch_device_fn
 

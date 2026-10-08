@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import flag_gems
 import pytest
 import torch
 import triton
+
+import flag_gems
 from flag_gems.ops import flash_api
 
 from .test_flash_kernel import DTYPES, LAYOUTS, assert_guards, make_output
