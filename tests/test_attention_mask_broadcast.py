@@ -18,6 +18,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 import flag_gems
 
+pytestmark = pytest.mark.attention
+
 
 def _attention(api, q, k, v, bias):
     if api == "sdpa":
