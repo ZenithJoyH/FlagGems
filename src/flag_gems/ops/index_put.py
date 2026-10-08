@@ -100,8 +100,7 @@ def generate_index_put_kernel(
         )
         if inp_rank == indices_len:
             code.writeline(
-                "offset1 = pid1.to(tl.int64) + "
-                "tl.arange(0, 1).to(tl.int64)[None, :]"
+                "offset1 = pid1.to(tl.int64) + " "tl.arange(0, 1).to(tl.int64)[None, :]"
             )
         else:
             code.writeline(

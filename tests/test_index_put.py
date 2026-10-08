@@ -31,6 +31,10 @@ else:
 
 INDEX_PUT_SHAPE_ACC_FALSE = (
     ((2**28,), ((2**16,),), (2**16,), False),
+    # grid.x = M / BLOCK_SIZE0 must stay within the launch limit, which is
+    # 65535 on some backends (e.g. enflame GCU300). M = 2**18 = 262144 exceeds
+    # it, so a kernel that chunks grid.x is required here.
+    ((2**19,), ((2**18,),), (2**18,), False),
     ((32, 32), ((8,), (8,)), (8,), False),
     ((32, 32), ((8,), (2, 8)), (8,), False),
     ((32, 32), ((2, 8),), (32,), False),
@@ -343,43 +347,112 @@ def test_index_put_mixed_none_and_tensor(input_shape, indices_config, dtype):
     utils.gems_assert_close(out, ref_out, dtype)
 
 
+@pytest.mark.index_put_
+@pytest.mark.parametrize("op_name", ["index_put_", "_index_put_impl_"])
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("accumulate", [False, True])
+def test_index_put__large_strided_offset(op_name, index_dtype, accumulate):
+    """Keep wrapped writes inside a guard and test both sides of 2**31."""
+    if flag_gems.device != "cuda":
+        pytest.skip("requires CUDA-compatible memory accounting")
+    stride = 102400
+    row = (2**31 + stride - 1) // stride
+    guard = 2**31
+    size = guard + (row + 1) * stride + 1
+    required = size * torch.tensor([], dtype=torch.float32).element_size()
+    if torch.cuda.mem_get_info()[0] < required + 2**30:
+        pytest.skip("requires 17 GiB of free device memory including the guard")
+
+    storage = torch.full((size,), 17, dtype=torch.float32, device=flag_gems.device)
+    inp = storage[guard:].as_strided((row + 2, 1), (stride, 1))
+    try:
+        index = torch.tensor(
+            [row - 1, row, row + 1], dtype=index_dtype, device=inp.device
+        )
+        values = torch.tensor([[1], [2], [3]], dtype=inp.dtype, device=inp.device)
+        expected = values + 17 if accumulate else values
+        # The native operator is a width/semantics control on the same strided view.
+        getattr(torch.ops.aten, op_name).default(inp, [index], values, accumulate)
+        torch.testing.assert_close(inp[index], expected, rtol=0, atol=0)
+        inp[index] = 17
+
+        getattr(flag_gems, op_name)(inp, [index], values, accumulate)
+        torch.cuda.synchronize()
+        torch.testing.assert_close(inp[index], expected, rtol=0, atol=0)
+        # Check the exact in-allocation destinations of the old signed int32 wrap.
+        wrapped = guard + (index.to(torch.int64) * stride + 2**31) % 2**32 - 2**31
+        wrapped = wrapped[index.to(torch.int64) * stride >= 2**31]
+        torch.testing.assert_close(
+            storage[wrapped], torch.full_like(storage[wrapped], 17)
+        )
+    finally:
+        del inp, storage
+
 
 @pytest.mark.index_put_
-def test_index_put__large_strided_offset():
-    """Offsets beyond int32 must not wrap before pointer arithmetic."""
-    stride0 = 102400
-    row = (2**31 + stride0 - 1) // stride0
-    storage_bytes = row * stride0 + 1
-    free_memory, _ = torch.cuda.mem_get_info()
-    if free_memory < storage_bytes + 512 * 2**20:
-        pytest.skip("requires at least 2.5 GiB of free device memory")
+@pytest.mark.parametrize("op_name", ["index_put_", "_index_put_impl_"])
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("graph_mode", [False, True])
+def test_index_put__bf16_strided_boundary(op_name, index_dtype, graph_mode):
+    """The tail of row 7281 crosses the boundary before its base does."""
+    if flag_gems.device != "cuda":
+        pytest.skip("requires CUDA-compatible memory accounting and graphs")
+    guard = 2**31
+    stride = 294912
+    width = 16 * 128 * 128
+    rows = [7280, 7281, 7282, 7415, 9108]
+    size = guard + rows[-1] * stride + width
+    if torch.cuda.mem_get_info()[0] < size * 2 + 2**30:
+        pytest.skip("requires 10 GiB of free device memory including the guard")
 
-    # uint8 keeps the backing storage near 2 GiB. The production
-    # failure uses float32 with the same stride and offset boundary.
-    inp = torch.empty_strided(
-        (row + 1, 1),
-        (stride0, 1),
-        dtype=torch.uint8,
-        device=flag_gems.device,
+    storage = torch.full((size,), 17, dtype=torch.bfloat16, device=flag_gems.device)
+    inp = storage[guard:].as_strided(
+        (rows[-1] + 1, 16, 128, 128), (stride, 16384, 128, 1)
     )
-    index = torch.tensor(
-        [row], dtype=torch.int32, device=flag_gems.device
-    )
-    ref_value = torch.tensor(
-        [17], dtype=torch.uint8, device=flag_gems.device
-    )
-    value = torch.tensor(
-        [93], dtype=torch.uint8, device=flag_gems.device
-    )
-
+    graph = None
+    wrong = None
     try:
-        inp.index_put_((index,), ref_value, accumulate=False)
-        torch.cuda.synchronize()
-        torch.testing.assert_close(inp[index], ref_value.unsqueeze(0))
+        index = torch.tensor(rows, dtype=index_dtype, device=inp.device)
+        # Non-contiguous indices and values exercise their independent offset paths.
+        index = torch.stack((index, index), dim=1)[:, 0]
+        values = torch.ones(
+            (len(rows), 16, 128, 256), dtype=inp.dtype, device=inp.device
+        )[..., ::2]
+        op = getattr(flag_gems, op_name)
+        native = getattr(torch.ops.aten, op_name).default
+        native(inp, [index], values, False)
+        torch.testing.assert_close(inp[index], values, rtol=0, atol=0)
+        inp[index] = 17
 
-        flag_gems.index_put_(inp, (index,), value, accumulate=False)
-        torch.cuda.synchronize()
-        torch.testing.assert_close(inp[index], value.unsqueeze(0))
+        graph = None
+        if graph_mode:
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                op(inp, [index], values, False)
+            torch.cuda.current_stream().wait_stream(stream)
+            torch.cuda.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                op(inp, [index], values, False)
+
+        for value in (3, 7):
+            values.fill_(value)
+            if graph is None:
+                op(inp, [index], values, False)
+            else:
+                graph.replay()
+            torch.cuda.synchronize()
+            torch.testing.assert_close(inp[index], values, rtol=0, atol=0)
+        # Check every potentially wrapped element, including row 7281's tail.
+        for row in rows:
+            start = row * stride
+            if start + width <= 2**31:
+                continue
+            first = max(start, 2**31)
+            wrong = storage[guard + first - 2**32 : guard + start + width - 2**32]
+            torch.testing.assert_close(
+                wrong, torch.full_like(wrong, 17), rtol=0, atol=0
+            )
     finally:
-        del inp
-        torch.cuda.empty_cache()
+        del wrong, graph, inp, storage
