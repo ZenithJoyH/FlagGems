@@ -136,7 +136,7 @@ def compute_global_hist_kernel(
         bit_offset = p * num_bits_per_pass
         for r_start in range(0, r, TILE_R):  # parallel
             bin_indices = r_start + tl.arange(0, TILE_R)
-            acc = tl.zeros((TILE_R, TILE_N), dtype=tl.int64)
+            acc = tl.zeros((TILE_R, TILE_N), dtype=tl.int32)
             for n_start in range(cta_n_start, cta_n_end, TILE_N):  # sequantial
                 n_offsets = n_start + tl.arange(0, TILE_N)  # (TILE_N, )
                 mask = n_offsets < cta_n_end
